@@ -1,6 +1,5 @@
 import ccxt
 import pandas as pd
-import time
 import requests
 from datetime import datetime
 
@@ -8,13 +7,11 @@ from datetime import datetime
 TELEGRAM_BOT_TOKEN = '8522442591:AAGRkeE12_thVSxCTdDF-jDD9fx7QL-J-xE'
 TELEGRAM_CHAT_ID = '1409591865'
 
-# Binance Connection (පින්තූරයේ තියෙන්නේ Futures නිසා Futures වලට ගැලපෙන්න හදා ඇත)
 exchange = ccxt.binance({
     'enableRateLimit': True,
     'options': {'defaultType': 'future'} 
 })
 
-# --- පින්තූරයෙන් ලබාගත් Coins ලැයිස්තුව ---
 TARGET_COINS = [
     'DOGE/USDT', 'BULLA/USDT', 'RIVER/USDT', 'DENT/USDT', 'ARC/USDT', 
     'MYX/USDT', 'FIL/USDT', 'PUMP/USDT', 'NEAR/USDT', 'UNI/USDT', 
@@ -22,9 +19,6 @@ TARGET_COINS = [
     'TRUMP/USDT', 'DOGE/USDC', 'IP/USDT', 'FET/USDT', 'CAKE/USDT', 
     'SPX/USDT', 'DYDX/USDT', 'BERA/USDT'
 ]
-
-# එකම සිග්නල් එක දෙපාරක් යැවීම වැළැක්වීමට
-last_signal_time = {coin: None for coin in TARGET_COINS}
 
 def send_telegram_message(message):
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
@@ -34,9 +28,8 @@ def send_telegram_message(message):
     except Exception as e:
         print(f"Telegram Error: {e}")
 
-def check_live_signals(symbol, lookback=20, rr_ratio=3.0):
+def check_hourly_signal(symbol, lookback=20, rr_ratio=3.0):
     try:
-        # මෙහි Timeframe එක '1h' (1 Hour) ලෙස නිශ්චිතවම දක්වා ඇත
         bars = exchange.fetch_ohlcv(symbol, '1h', limit=100)
         df = pd.DataFrame(bars, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
         
@@ -50,18 +43,16 @@ def check_live_signals(symbol, lookback=20, rr_ratio=3.0):
         df['tr'] = df[['tr0', 'tr1', 'tr2']].max(axis=1)
         df['atr'] = df['tr'].rolling(window=14).mean()
 
-        current = df.iloc[-1]
-        prev = df.iloc[-2]
-        current_time = current['timestamp']
-
-        if last_signal_time[symbol] == current_time:
-            return 
+        # අන්තිමට සම්පූර්ණයෙන්ම Close වුණු Candle එක (index -2)
+        current = df.iloc[-2]
+        prev = df.iloc[-3]
 
         trend = 0
         rbs_level = None
         sbr_level = None
 
-        for i in range(len(df)-10, len(df)): 
+        # BOS Logic
+        for i in range(len(df)-12, len(df)-1): 
             row = df.iloc[i]
             p_row = df.iloc[i-1]
             if row['close'] > row['recent_high'] and p_row['close'] <= p_row['recent_high']:
@@ -88,12 +79,10 @@ def check_live_signals(symbol, lookback=20, rr_ratio=3.0):
                 f"<b>Entry:</b> {current['close']}\n"
                 f"<b>Stop Loss:</b> {sl:.4f}\n"
                 f"<b>Take Profit:</b> {tp:.4f}\n"
-                f"<b>RR:</b> 1:{rr_ratio}\n"
-                f"<b>Setup:</b> Price swept RBS level at {rbs_level:.4f}"
+                f"<b>RR:</b> 1:{rr_ratio}"
             )
             send_telegram_message(msg)
-            last_signal_time[symbol] = current_time
-            print(f"[{datetime.now().strftime('%H:%M:%S')}] 1H BUY Signal sent for {symbol}")
+            print(f"BUY Signal sent for {symbol}")
 
         elif sell_setup:
             sl = current['high'] + current['atr']
@@ -107,22 +96,15 @@ def check_live_signals(symbol, lookback=20, rr_ratio=3.0):
                 f"<b>Entry:</b> {current['close']}\n"
                 f"<b>Stop Loss:</b> {sl:.4f}\n"
                 f"<b>Take Profit:</b> {tp:.4f}\n"
-                f"<b>RR:</b> 1:{rr_ratio}\n"
-                f"<b>Setup:</b> Price swept SBR level at {sbr_level:.4f}"
+                f"<b>RR:</b> 1:{rr_ratio}"
             )
             send_telegram_message(msg)
-            last_signal_time[symbol] = current_time
-            print(f"[{datetime.now().strftime('%H:%M:%S')}] 1H SELL Signal sent for {symbol}")
+            print(f"SELL Signal sent for {symbol}")
 
     except Exception as e:
-        # සමහර අලුත් memecoins වලට futures data නැති වෙන්න පුළුවන්, එතකොට bot නතර වෙන්නේ නෑ.
         pass
 
-print("🚀 Live MSNR Bot Started. Monitoring target coins on 1h timeframe...")
-while True:
-    for coin in TARGET_COINS:
-        check_live_signals(coin)
-        time.sleep(1) # API Limit එකෙන් බේරෙන්න
-    
-    # 1h timeframe එකක් නිසා තත්පර 60ක් (විනාඩියක්) ඉඳලා ආයෙත් බලනවා
-    time.sleep(60)
+print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Running MSNR Hourly Check...")
+for coin in TARGET_COINS:
+    check_hourly_signal(coin)
+print("Check Complete.")
