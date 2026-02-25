@@ -3,15 +3,19 @@ import pandas as pd
 import requests
 from datetime import datetime
 
-# Telegram Bot Details
+# ==========================================
+# 1. ඔබගේ Telegram විස්තර (Update කර ඇත)
+# ==========================================
 TELEGRAM_BOT_TOKEN = '8522442591:AAGRkeE12_thVSxCTdDF-jDD9fx7QL-J-xE'
 TELEGRAM_CHAT_ID = '1409591865'
 
+# Binance Connection (Futures Market)
 exchange = ccxt.binance({
     'enableRateLimit': True,
     'options': {'defaultType': 'future'} 
 })
 
+# පින්තූරයේ තිබූ Coins ලැයිස්තුව
 TARGET_COINS = [
     'DOGE/USDT', 'BULLA/USDT', 'RIVER/USDT', 'DENT/USDT', 'ARC/USDT', 
     'MYX/USDT', 'FIL/USDT', 'PUMP/USDT', 'NEAR/USDT', 'UNI/USDT', 
@@ -24,15 +28,18 @@ def send_telegram_message(message):
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     payload = {'chat_id': TELEGRAM_CHAT_ID, 'text': message, 'parse_mode': 'HTML'}
     try:
-        requests.post(url, data=payload)
+        response = requests.post(url, data=payload)
+        return response
     except Exception as e:
         print(f"Telegram Error: {e}")
 
 def check_hourly_signal(symbol, lookback=20, rr_ratio=3.0):
     try:
+        # 1H Data ලබා ගැනීම
         bars = exchange.fetch_ohlcv(symbol, '1h', limit=100)
         df = pd.DataFrame(bars, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
         
+        # MSNR Strategy Indicators (BOS + RBS/SBR)
         df['recent_high'] = df['high'].shift(1).rolling(window=lookback).max()
         df['recent_low'] = df['low'].shift(1).rolling(window=lookback).min()
         
@@ -43,27 +50,25 @@ def check_hourly_signal(symbol, lookback=20, rr_ratio=3.0):
         df['tr'] = df[['tr0', 'tr1', 'tr2']].max(axis=1)
         df['atr'] = df['tr'].rolling(window=14).mean()
 
-        # අන්තිමට සම්පූර්ණයෙන්ම Close වුණු Candle එක (index -2)
+        # අන්තිමටම Close වුණු Candle එක (Index -2)
         current = df.iloc[-2]
-        prev = df.iloc[-3]
-
+        
         trend = 0
         rbs_level = None
         sbr_level = None
 
-        # BOS Logic
-        for i in range(len(df)-12, len(df)-1): 
+        # BOS / Trend හඳුනා ගැනීම
+        for i in range(len(df)-15, len(df)-1): 
             row = df.iloc[i]
             p_row = df.iloc[i-1]
             if row['close'] > row['recent_high'] and p_row['close'] <= p_row['recent_high']:
                 trend = 1
                 rbs_level = row['recent_high']
-                sbr_level = None
             elif row['close'] < row['recent_low'] and p_row['close'] >= p_row['recent_low']:
                 trend = -1
                 sbr_level = row['recent_low']
-                rbs_level = None
 
+        # Entry Conditions (MSNR Logic)
         buy_setup = (trend == 1) and (rbs_level is not None) and (current['low'] <= rbs_level) and (current['close'] > rbs_level)
         sell_setup = (trend == -1) and (sbr_level is not None) and (current['high'] >= sbr_level) and (current['close'] < sbr_level)
 
@@ -82,7 +87,6 @@ def check_hourly_signal(symbol, lookback=20, rr_ratio=3.0):
                 f"<b>RR:</b> 1:{rr_ratio}"
             )
             send_telegram_message(msg)
-            print(f"BUY Signal sent for {symbol}")
 
         elif sell_setup:
             sl = current['high'] + current['atr']
@@ -99,12 +103,22 @@ def check_hourly_signal(symbol, lookback=20, rr_ratio=3.0):
                 f"<b>RR:</b> 1:{rr_ratio}"
             )
             send_telegram_message(msg)
-            print(f"SELL Signal sent for {symbol}")
 
     except Exception as e:
-        pass
+        print(f"Error checking {symbol}: {e}")
 
-print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Running MSNR Hourly Check...")
-for coin in TARGET_COINS:
-    check_hourly_signal(coin)
-print("Check Complete.")
+# --- Main execution ---
+if __name__ == "__main__":
+    now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    print(f"[{now_str}] MSNR Bot Started...")
+    
+    # පද්ධතිය වැඩදැයි බැලීමට Test Message එකක් යැවීම
+    test_res = send_telegram_message(f"🤖 <b>MSNR Bot Status Update</b>\nබොට් සාර්ථකව ක්‍රියාත්මක වුණා!\nවෙලාව: {now_str}\nදැන් Coins පරීක්ෂා කිරීම අරඹනවා...")
+    
+    if test_res and test_res.status_code != 200:
+        print(f"Telegram API Error: {test_res.text}")
+
+    for coin in TARGET_COINS:
+        check_hourly_signal(coin)
+        
+    print(f"[{datetime.now().strftime('%H:%M:%S')}] Check Complete.")
